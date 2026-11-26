@@ -42,7 +42,9 @@ import java.util.ArrayList;
 
 public class MainActivity extends Activity {
     private static final String HOME = "https://lumen.home/";
-    private static final String SEARCH = "https://duckduckgo.com/?q=";
+    private static final String[] ENGINES = {"DuckDuckGo", "Google", "Bing", "Brave"};
+    private static final String[] SEARCH = {"https://duckduckgo.com/", "https://www.google.com/search",
+            "https://www.bing.com/search", "https://search.brave.com/search"};
     private static final int PICK_FILE = 1;
     private static final int HISTORY_MAX = 500;
     private static final String[] BLOCK = {"doubleclick.net", "googlesyndication.com", "googleadservices.com",
@@ -53,7 +55,7 @@ public class MainActivity extends Activity {
             + "<title>Lumen</title></head><body style='margin:0;height:100vh;display:flex;flex-direction:column;"
             + "align-items:center;justify-content:center;gap:24px;background:#070b14;color:#e6e9f5;font-family:sans-serif'>"
             + "<h1 style='font:600 60px serif;margin:0;color:#8fb4ff'>Lumen</h1>"
-            + "<form action='https://duckduckgo.com/' style='width:85%'><input name='q' placeholder='Cauta pe net' "
+            + "<form action='%ACTION%' style='width:85%'><input name='q' placeholder='Cauta cu %NAME%' "
             + "style='width:100%;box-sizing:border-box;height:48px;border-radius:24px;border:1px solid #333c55;"
             + "background:#121a2f;color:#e6e9f5;padding:0 20px;font-size:16px'></form></body></html>";
 
@@ -136,10 +138,33 @@ public class MainActivity extends Activity {
         return url.startsWith("http://") || url.startsWith("https://");
     }
 
-    private static String toUrl(String text) {
+    private String toUrl(String text) {
         if (isWeb(text)) return text;
         if (!text.contains(" ") && text.contains(".")) return "https://" + text;
-        return SEARCH + Uri.encode(text);
+        return SEARCH[engine()] + "?q=" + Uri.encode(text);
+    }
+
+    // ---- motor de cautare ----
+    private int engine() {
+        int i = prefs.getInt("engine", 0);
+        return i >= 0 && i < ENGINES.length ? i : 0;
+    }
+
+    private String homeHtml() {
+        int i = engine();
+        return HOME_HTML.replace("%ACTION%", SEARCH[i]).replace("%NAME%", ENGINES[i]);
+    }
+
+    private void chooseEngine() {
+        new AlertDialog.Builder(this).setTitle("Motor de cautare")
+                .setSingleChoiceItems(ENGINES, engine(), (d, i) -> {
+                    prefs.edit().putInt("engine", i).apply();
+                    for (WebView w : tabs)
+                        if (w.getUrl() != null && w.getUrl().startsWith(HOME)) w.reload();
+                    d.dismiss();
+                    toast("Cautare cu " + ENGINES[i]);
+                })
+                .setNegativeButton("Inchide", null).show();
     }
 
     // ---- taburi ----
@@ -165,7 +190,7 @@ public class MainActivity extends Activity {
                 if (host == null) return null;
                 if (host.equals("lumen.home"))
                     return new WebResourceResponse("text/html", "utf-8",
-                            new ByteArrayInputStream(HOME_HTML.getBytes(StandardCharsets.UTF_8)));
+                            new ByteArrayInputStream(homeHtml().getBytes(StandardCharsets.UTF_8)));
                 if (blockAds && !r.isForMainFrame())
                     for (String b : BLOCK)
                         if (host.equals(b) || host.endsWith("." + b))
@@ -313,7 +338,8 @@ public class MainActivity extends Activity {
                 saved ? "Scoate de la favorite" : "Adauga la favorite", "Favorite", "Istoric", "Descarcari",
                 "Trimite linkul", "Blocare reclame: " + (blockAds ? "DA" : "NU"),
                 "Mod dark pentru site-uri: " + (prefs.getBoolean("dark", true) ? "DA" : "NU"),
-                "Sterge istoricul, cookies si cache"};
+                "Sterge istoricul, cookies si cache",
+                "Motor de cautare: " + ENGINES[engine()]};
         new AlertDialog.Builder(this).setItems(items, (d, i) -> {
             switch (i) {
                 case 0: if (current.canGoBack()) current.goBack(); break;
@@ -339,6 +365,7 @@ public class MainActivity extends Activity {
                     break;
                 case 10: toggleDark(); break;
                 case 11: confirmClear(); break;
+                case 12: chooseEngine(); break;
             }
         }).show();
     }
