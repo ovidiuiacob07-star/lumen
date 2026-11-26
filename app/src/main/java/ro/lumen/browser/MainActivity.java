@@ -11,6 +11,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Message;
+import android.text.Html;
+import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -37,27 +39,155 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
     private static final String HOME = "https://lumen.home/";
-    private static final String[] ENGINES = {"DuckDuckGo", "Google", "Bing", "Brave"};
-    private static final String[] SEARCH = {"https://duckduckgo.com/", "https://www.google.com/search",
-            "https://www.bing.com/search", "https://search.brave.com/search"};
+    private static final String LUMEN_SEARCH = "https://lumen.search/";
+    private static final String[] ENGINES = {"Lumen", "DuckDuckGo", "Google", "Bing", "Brave"};
+    private static final String[] SEARCH = {LUMEN_SEARCH, "https://duckduckgo.com/",
+            "https://www.google.com/search", "https://www.bing.com/search", "https://search.brave.com/search"};
+    private static final Pattern LINK = Pattern.compile("<a\\s([^>]*)>(.*?)</a>", Pattern.DOTALL);
+    private static final Pattern CLASS = Pattern.compile("class=\"([^\"]*)\"");
+    private static final Pattern HREF = Pattern.compile("href=\"([^\"]*)\"");
     private static final int PICK_FILE = 1;
     private static final int HISTORY_MAX = 500;
     private static final String[] BLOCK = {"doubleclick.net", "googlesyndication.com", "googleadservices.com",
             "google-analytics.com", "googletagmanager.com", "adservice.google.com", "connect.facebook.net",
             "scorecardresearch.com", "taboola.com", "outbrain.com", "adnxs.com", "criteo.com", "hotjar.com",
             "amazon-adsystem.com"};
-    private static final String HOME_HTML = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-            + "<title>Lumen</title></head><body style='margin:0;height:100vh;display:flex;flex-direction:column;"
-            + "align-items:center;justify-content:center;gap:24px;background:#070b14;color:#e6e9f5;font-family:sans-serif'>"
-            + "<h1 style='font:600 60px serif;margin:0;color:#8fb4ff'>Lumen</h1>"
-            + "<form action='%ACTION%' style='width:85%'><input name='q' placeholder='Cauta cu %NAME%' "
-            + "style='width:100%;box-sizing:border-box;height:48px;border-radius:24px;border:1px solid #333c55;"
-            + "background:#121a2f;color:#e6e9f5;padding:0 20px;font-size:16px'></form></body></html>";
+    private static final String HOME_HTML = """
+<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>@NAME@</title></head><body style="margin:0;height:100vh;display:flex;flex-direction:column;
+align-items:center;justify-content:center;gap:28px;color:#e6e9f5;font-family:Segoe UI,system-ui,sans-serif;
+background:radial-gradient(900px 420px at 50% -10%,rgba(40,90,255,.55),transparent 70%),#070b14">
+<h1 style="font-family:'@FONT@',Georgia,serif;font-size:60px;font-weight:600;margin:0;letter-spacing:-2px;background:linear-gradient(90deg,#a9c4ff,#4f8cff);
+-webkit-background-clip:text;color:transparent">@NAME@</h1>
+<form action="@ACTION@" style="width:min(560px,80%)">
+<input name="q" autofocus placeholder="Cauta cu @ENGINE@ sau scrie o adresa" style="width:100%;box-sizing:border-box;
+height:46px;border-radius:23px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);
+color:#e6e9f5;padding:0 20px;font-size:15px;outline:none"></form>
+<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:12px;padding:0 16px">
+<a href="https://google.com" style="width:80px;padding:16px 0;text-align:center;border-radius:16px;color:#e6e9f5;text-decoration:none;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06)">Google</a><a href="https://youtube.com" style="width:80px;padding:16px 0;text-align:center;border-radius:16px;color:#e6e9f5;text-decoration:none;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06)">YouTube</a>
+<a href="https://wikipedia.org" style="width:80px;padding:16px 0;text-align:center;border-radius:16px;color:#e6e9f5;text-decoration:none;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06)">Wikipedia</a><a href="https://github.com" style="width:80px;padding:16px 0;text-align:center;border-radius:16px;color:#e6e9f5;text-decoration:none;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06)">GitHub</a>
+</div></body></html>""";
+    private static final String RESULTS_HTML = """
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>@Q@ - @NAME@</title><style>
+body{margin:0;background:#070b14;color:#e6e9f5;font-family:sans-serif}
+.top{display:flex;align-items:center;gap:24px;padding:22px 40px;border-bottom:1px solid rgba(255,255,255,.08);
+ background:radial-gradient(700px 200px at 20% -40%,rgba(40,90,255,.45),transparent 70%)}
+.logo{font:600 34px Georgia,serif;background:linear-gradient(90deg,#a9c4ff,#4f8cff);-webkit-background-clip:text;
+ color:transparent;text-decoration:none;letter-spacing:-1px}
+form{flex:1;max-width:640px;margin:0}
+input{width:100%;box-sizing:border-box;height:44px;border-radius:22px;border:1px solid rgba(255,255,255,.15);
+ background:rgba(255,255,255,.06);color:#e6e9f5;padding:0 20px;font-size:15px;outline:none;font-family:inherit}
+input:focus{border-color:#4f8cff}
+.wrap{max-width:760px;margin-left:40px;padding:24px 0 60px}
+.r{padding:16px 20px;margin-bottom:14px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04)}
+.r:hover{border-color:rgba(79,140,255,.6)}
+.u{font-size:12px;color:#7fd6a4;margin-bottom:4px;word-break:break-all}
+.t{font-size:19px;color:#8fb4ff;text-decoration:none}.t:hover{text-decoration:underline}
+.s{margin-top:6px;font-size:14px;line-height:1.5;color:#c4cbe3}
+.m{color:#8b93ad;font-size:14px}.m a{color:#8fb4ff}
+@media(max-width:700px){.top{flex-direction:column;gap:12px;padding:18px 16px}form{width:100%;flex:none}
+.wrap{margin:0;padding:16px 12px 40px}}
+</style></head><body>
+<div class="top"><a class="logo" href="https://lumen.search/">@NAME@</a>
+<form action="https://lumen.search/"><input name="q" value="@Q@" autofocus></form></div>
+<div class="wrap">@BODY@</div></body></html>""";
+    private static final String THEME_CSS = """
+html, html * { font-family: system-ui, sans-serif !important; }
+html, body, body > div, body > div > div { background: #070b14 !important; }
+a { color: #8fb4ff !important; }
+article, li[data-layout] { background: rgba(255,255,255,.04) !important; border: 1px solid rgba(255,255,255,.08) !important;
+  border-radius: 16px !important; padding: 14px 18px !important; margin-bottom: 14px !important; }
+form { background: rgba(255,255,255,.06) !important; border: 1px solid rgba(255,255,255,.12) !important;
+  border-radius: 28px !important; }
+::selection { background: #4f8cff; color: #fff; }""";
+    private static final String BRAND_JS = """
+(function(){
+ if(!/(^|\\.)duckduckgo\\.com$/.test(location.hostname)) return;
+ var NAME = @NAME@, FONT = @FONT@;
+ function mark(size){
+  var sp = document.createElement("span");
+  sp.textContent = NAME;
+  sp.style.cssText = "font:600 " + size + "px '" + FONT + "',Georgia,serif;color:#8fb4ff;letter-spacing:-.5px;padding:0 8px;white-space:nowrap";
+  return sp;
+ }
+ function swap(el, r){
+  el.dataset.lumen = "1";
+  var big = r.width > 150;
+  if(el.tagName === "A" || el.tagName === "BUTTON"){ el.textContent = ""; el.appendChild(mark(big ? 56 : 26)); el.style.width = "auto"; }
+  else { el.replaceWith(mark(big ? 56 : 26)); }
+ }
+ var STYLE = @CSS@, THEME = @THEME@;
+ function theme(){
+  if(!THEME) return;
+  if(!document.getElementById("lumen-style")){
+   var st = document.createElement("style"); st.id = "lumen-style"; st.textContent = STYLE;
+   (document.head || document.documentElement).appendChild(st);
+  }
+  var w = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT, null), n;
+  while((n = w.nextNode())){
+   var tx = n.nodeValue.trim();
+   if(tx === "Share Feedback" || tx === "Protection. Privacy. Peace of mind."){
+    var h = n.parentNode.closest("button,a") || n.parentNode; h.style.display = "none";
+   }
+  }
+ }
+ var scans = 0, lastHref = "";
+ function brand(){
+  theme();
+  // logo: element vizual (imagine / svg / fundal) in zona de sus-stanga, sau sus-centru pe pagina de start
+  if(lastHref !== location.href){ lastHref = location.href; scans = 0; }
+  if(scans < 60){
+   scans++;
+   var home = location.pathname === "/" && !/[?&]q=/.test(location.search);
+   document.querySelectorAll("img,svg,a,button,span,div").forEach(function(el){
+    if(el.dataset.lumen || el.closest("[data-lumen]")) return;
+    if(el.closest("form,nav,[role=tablist],[role=listbox],[role=dialog],input,textarea")) return;
+    var r = el.getBoundingClientRect();
+    if(r.width < 24 || r.height < 24 || r.width > 600 || r.height > 300) return;
+    if(!((r.top < 150 && r.left < 320) || (home && r.top < 450))) return;
+    var tag = el.tagName.toLowerCase();
+    var visual = tag === "img" || tag === "svg" || getComputedStyle(el).backgroundImage !== "none" ||
+                 (el.querySelector("img,svg") && el.textContent.trim() === "");
+    if(!visual) return;
+    var t = el.closest("a,button") || el;
+    if(t.dataset.lumen || t.querySelector("input,textarea")) return;
+    if(!/^$|Duck/.test(t.textContent.trim())) return;
+    swap(t, t.getBoundingClientRect());
+   });
+  }
+  document.querySelectorAll('img[alt*="DuckDuckGo" i], svg[aria-label*="DuckDuckGo" i]').forEach(function(el){
+   if(!el.dataset.lumen && !el.closest("[data-lumen]")) swap(el, el.getBoundingClientRect());
+  });
+  // text
+  if(document.body){
+   var w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null), n;
+   while((n = w.nextNode())){
+    var v = n.nodeValue;
+    if(v && /Duck ?Duck ?Go/.test(v) && !/^(SCRIPT|STYLE|TEXTAREA|INPUT)$/.test(n.parentNode.nodeName))
+     n.nodeValue = v.replace(/Duck ?Duck ?Go/g, NAME);
+    if(v && v.indexOf("Duck.ai") > -1 && !/^(SCRIPT|STYLE|TEXTAREA|INPUT)$/.test(n.parentNode.nodeName))
+     n.nodeValue = n.nodeValue.replace(/Duck\\.ai/g, NAME + " AI");
+   }
+  }
+  if(/Duck ?Duck ?Go/.test(document.title)) document.title = document.title.replace(/Duck ?Duck ?Go/g, NAME);
+ }
+ var timer = null;
+ function run(){ timer = null; try{ brand(); }catch(e){} }
+ function sched(){ if(timer === null) timer = setTimeout(run, 150); }
+ run();
+ new MutationObserver(sched).observe(document.documentElement, {childList:true, subtree:true});
+})();""";
 
     private final ArrayList<WebView> tabs = new ArrayList<>();
     private WebView current;
@@ -146,19 +276,123 @@ public class MainActivity extends Activity {
 
     // ---- motor de cautare ----
     private int engine() {
-        int i = prefs.getInt("engine", 0);
-        return i >= 0 && i < ENGINES.length ? i : 0;
+        int i = Arrays.asList(ENGINES).indexOf(prefs.getString("motor", ENGINES[0]));
+        return Math.max(i, 0);
+    }
+
+    private String brandName() {
+        return prefs.getString("name", "Lumen");
     }
 
     private String homeHtml() {
         int i = engine();
-        return HOME_HTML.replace("%ACTION%", SEARCH[i]).replace("%NAME%", ENGINES[i]);
+        return HOME_HTML.replace("@ACTION@", SEARCH[i]).replace("@ENGINE@", ENGINES[i])
+                .replace("@FONT@", "Georgia").replace("@NAME@", TextUtils.htmlEncode(brandName()));
+    }
+
+    // ---- cautarea Lumen: rezultate de la DuckDuckGo, afisate in designul tau ----
+    private static String plain(String markup) {
+        return Html.fromHtml(markup, Html.FROM_HTML_MODE_LEGACY).toString().replaceAll("\\s+", " ").trim();
+    }
+
+    /** Fiecare rezultat: {adresa, titlu, descriere}. */
+    private static ArrayList<String[]> parseResults(String raw) {
+        ArrayList<String[]> out = new ArrayList<>();
+        String[] last = null;
+        Matcher m = LINK.matcher(raw);
+        while (m.find()) {
+            Matcher c = CLASS.matcher(m.group(1)), h = HREF.matcher(m.group(1));
+            if (!c.find() || !h.find()) continue;
+            String classes = " " + c.group(1) + " ";
+            if (classes.contains(" result__a ")) {
+                last = null;
+                String url = h.group(1).replace("&amp;", "&");
+                if (url.startsWith("//")) url = "https:" + url;
+                if (url.contains("duckduckgo.com/y.js")) continue;      // reclame
+                Uri uri = Uri.parse(url);
+                String real = uri.isHierarchical() ? uri.getQueryParameter("uddg") : null;
+                if (real != null) url = real;
+                String title = plain(m.group(2));
+                if (!isWeb(url) || url.contains("duckduckgo.com/y.js") || title.isEmpty()) continue;
+                last = new String[]{url, title, ""};
+                out.add(last);
+            } else if (classes.contains(" result__snippet ") && last != null) {
+                last[2] = plain(m.group(2));
+            }
+        }
+        return out;
+    }
+
+    /** Se apeleaza pe un fir de fundal (din shouldInterceptRequest). */
+    private String resultsHtml(String query) {
+        StringBuilder body = new StringBuilder();
+        String error = "Posibil sa fi cerut verificare.";
+        HttpURLConnection connection = null;
+        try {
+            connection = (HttpURLConnection) new URL("https://html.duckduckgo.com/html/?q=" + Uri.encode(query))
+                    .openConnection();
+            connection.setConnectTimeout(12000);
+            connection.setReadTimeout(12000);
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
+            connection.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            try (InputStream in = connection.getInputStream()) {
+                byte[] buffer = new byte[8192];
+                for (int n; (n = in.read(buffer)) != -1; ) bytes.write(buffer, 0, n);
+            }
+            for (String[] result : parseResults(new String(bytes.toByteArray(), StandardCharsets.UTF_8))) {
+                String shown = result[0].replaceFirst("^https?://(www\\.)?", "");
+                if (shown.length() > 90) shown = shown.substring(0, 90);
+                body.append("<div class='r'><div class='u'>").append(TextUtils.htmlEncode(shown))
+                        .append("</div><a class='t' href=\"").append(TextUtils.htmlEncode(result[0])).append("\">")
+                        .append(TextUtils.htmlEncode(result[1])).append("</a><div class='s'>")
+                        .append(TextUtils.htmlEncode(result[2])).append("</div></div>");
+            }
+        } catch (Exception e) {
+            error = "Eroare: " + e.getMessage();
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+        if (body.length() == 0)
+            body.append("<p class='m'>Nu am putut afisa rezultate. ").append(TextUtils.htmlEncode(error))
+                    .append("<br><a href=\"https://duckduckgo.com/?q=").append(Uri.encode(query))
+                    .append("\">Deschide cautarea direct</a></p>");
+        else body.append("<p class='m'>Rezultate: DuckDuckGo</p>");
+        // @BODY@ la urma, ca textul din rezultate sa nu fie inlocuit
+        return RESULTS_HTML.replace("@NAME@", TextUtils.htmlEncode(brandName()))
+                .replace("@Q@", TextUtils.htmlEncode(query)).replace("@BODY@", body);
+    }
+
+    // ---- "acoperirea": numele tau in loc de DuckDuckGo ----
+    private void brand(WebView web) {
+        String url = web.getUrl();
+        String host = url == null ? null : Uri.parse(url).getHost();
+        if (host == null || !(host.equals("duckduckgo.com") || host.endsWith(".duckduckgo.com"))) return;
+        String js = BRAND_JS.replace("@CSS@", JSONObject.quote(THEME_CSS))
+                .replace("@THEME@", String.valueOf(prefs.getBoolean("theme", true)))
+                .replace("@FONT@", JSONObject.quote("Georgia"))
+                .replace("@NAME@", JSONObject.quote(brandName()));
+        web.evaluateJavascript("if(!window.__lumen){window.__lumen=true;" + js + "}", null);
+    }
+
+    private void editName() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(brandName());
+        new AlertDialog.Builder(this).setTitle("Numele afisat in loc de DuckDuckGo").setView(input)
+                .setPositiveButton("Salveaza", (d, w) -> {
+                    String name = input.getText().toString().trim();
+                    prefs.edit().putString("name", name.isEmpty() ? "Lumen" : name).apply();
+                    current.reload();
+                })
+                .setNegativeButton("Renunta", null).show();
     }
 
     private void chooseEngine() {
         new AlertDialog.Builder(this).setTitle("Motor de cautare")
                 .setSingleChoiceItems(ENGINES, engine(), (d, i) -> {
-                    prefs.edit().putInt("engine", i).apply();
+                    prefs.edit().putString("motor", ENGINES[i]).apply();
                     for (WebView w : tabs)
                         if (w.getUrl() != null && w.getUrl().startsWith(HOME)) w.reload();
                     d.dismiss();
@@ -191,6 +425,12 @@ public class MainActivity extends Activity {
                 if (host.equals("lumen.home"))
                     return new WebResourceResponse("text/html", "utf-8",
                             new ByteArrayInputStream(homeHtml().getBytes(StandardCharsets.UTF_8)));
+                if (host.equals("lumen.search") && r.isForMainFrame()) {
+                    String q = r.getUrl().getQueryParameter("q");
+                    String page = q == null || q.trim().isEmpty() ? homeHtml() : resultsHtml(q.trim());
+                    return new WebResourceResponse("text/html", "utf-8",
+                            new ByteArrayInputStream(page.getBytes(StandardCharsets.UTF_8)));
+                }
                 if (blockAds && !r.isForMainFrame())
                     for (String b : BLOCK)
                         if (host.equals(b) || host.endsWith("." + b))
@@ -208,6 +448,11 @@ public class MainActivity extends Activity {
             }
 
             @Override
+            public void onPageFinished(WebView v, String url) {
+                brand(v);
+            }
+
+            @Override
             public void doUpdateVisitedHistory(WebView v, String url, boolean reload) {
                 if (v == current) showAddress(url);
                 if (saveable(url)) put("history", url, v.getTitle(), HISTORY_MAX);
@@ -218,6 +463,7 @@ public class MainActivity extends Activity {
             @Override
             public void onProgressChanged(WebView v, int p) {
                 if (v == current) showProgress(p);
+                if (p >= 40) brand(v);
             }
 
             @Override
@@ -322,7 +568,10 @@ public class MainActivity extends Activity {
     }
 
     private void showAddress(String url) {
-        if (!address.hasFocus()) address.setText(url == null || url.startsWith(HOME) ? "" : url);
+        if (address.hasFocus()) return;
+        if (url == null || url.startsWith(HOME)) address.setText("");
+        else if (url.startsWith(LUMEN_SEARCH)) address.setText(Uri.parse(url).getQueryParameter("q"));
+        else address.setText(url);
     }
 
     private void showProgress(int p) {
@@ -339,7 +588,8 @@ public class MainActivity extends Activity {
                 "Trimite linkul", "Blocare reclame: " + (blockAds ? "DA" : "NU"),
                 "Mod dark pentru site-uri: " + (prefs.getBoolean("dark", true) ? "DA" : "NU"),
                 "Sterge istoricul, cookies si cache",
-                "Motor de cautare: " + ENGINES[engine()]};
+                "Motor de cautare: " + ENGINES[engine()], "Nume afisat: " + brandName(),
+                "Tema pe DuckDuckGo: " + (prefs.getBoolean("theme", true) ? "DA" : "NU")};
         new AlertDialog.Builder(this).setItems(items, (d, i) -> {
             switch (i) {
                 case 0: if (current.canGoBack()) current.goBack(); break;
@@ -366,6 +616,11 @@ public class MainActivity extends Activity {
                 case 10: toggleDark(); break;
                 case 11: confirmClear(); break;
                 case 12: chooseEngine(); break;
+                case 13: editName(); break;
+                case 14:
+                    prefs.edit().putBoolean("theme", !prefs.getBoolean("theme", true)).apply();
+                    current.reload();
+                    break;
             }
         }).show();
     }
